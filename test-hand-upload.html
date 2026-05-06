@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>全息粒子 3D 模型 - 手势交互</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #030305;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #ui-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            color: #fff;
+            pointer-events: none;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+        }
+
+        .status-card {
+            background: rgba(15, 15, 20, 0.7);
+            backdrop-filter: blur(12px);
+            padding: 20px;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 10px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+
+        .status-item {
+            margin: 8px 0;
+            font-size: 14px;
+            display: flex;
+            justify-content: space-between;
+            width: 200px;
+        }
+        
+        .status-value {
+            color: #ffaa00;
+            font-weight: bold;
+        }
+
+        #video-container {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 200px;
+            height: 150px;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 2px solid rgba(255, 170, 0, 0.5);
+            transform: scaleX(-1);
+            background: #111;
+            box-shadow: 0 4px 15px rgba(255, 170, 0, 0.2);
+        }
+
+        #webcam-video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .loader {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ffaa00;
+            text-align: center;
+            z-index: 100;
+            background: rgba(0,0,0,0.8);
+            padding: 30px;
+            border-radius: 20px;
+            backdrop-filter: blur(5px);
+        }
+
+        .loader-spinner {
+            border: 4px solid rgba(255, 170, 0, 0.1);
+            border-left-color: #ffaa00;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* 新增上传按钮样式 */
+        .upload-wrapper {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 20;
+        }
+        
+        .upload-btn {
+            background: linear-gradient(135deg, #ff8800, #ffaa00);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 50px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(255, 170, 0, 0.4);
+            transition: all 0.3s ease;
+        }
+
+        .upload-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 20px rgba(255, 170, 0, 0.6);
+        }
+
+        #imageUpload {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loader" class="loader">
+        <div class="loader-spinner"></div>
+        <p id="loader-text">正在初始化场景与手势...</p>
+    </div>
+
+    <!-- 上传按钮区 -->
+    <div class="upload-wrapper">
+        <button class="upload-btn" onclick="document.getElementById('imageUpload').click()">
+            📷 上传照片进行 3D 建模
+        </button>
+        <input type="file" id="imageUpload" accept="image/png, image/jpeg, image/jpg">
+    </div>
+
+    <div id="ui-overlay">
+        <div class="status-card">
+            <h2 style="margin: 0 0 15px 0; color: #ffaa00; font-size: 18px;">全息模型控制器</h2>
+            <div class="status-item"><span>手势状态:</span> <span class="status-value" id="gesture-type">等待中...</span></div>
+            <div class="status-item"><span>相机距离:</span> <span class="status-value" id="zoom-speed">0</span></div>
+            <div class="status-item"><span>模型旋转:</span> <span class="status-value" id="rotation-val">0°</span></div>
+        </div>
+        <div class="status-card" style="font-size: 12px; opacity: 0.8; width: 200px; color: #ccc;">
+            <strong>操作指南:</strong><br><br>
+            ✋ <strong>旋转手掌:</strong> 360° 环绕观察模型<br>
+            ✊ <strong>握拳退后:</strong> 相机快速远离主体<br>
+            🖐️ <strong>张手靠近:</strong> 相机快速推近主体
+        </div>
+    </div>
+
+    <div id="video-container">
+        <video id="webcam-video" autoplay playsinline></video>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.module.min.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- 核心参数 ---
+        const MODEL_PARTICLES = 120000; // 模型粒子数
+        const RING_PARTICLES = 5000;    
+        const MIN_CAMERA_DIST = 20;
+        const MAX_CAMERA_DIST = 120;
+        
+        // 初始默认使用猫咪图
+        const DEFAULT_IMAGE_URL = 'https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80';
+        
+        let scene, camera, renderer;
+        let mainGroup, modelParticles, ring1, ring2;
+        let videoElement, hands;
+        let currentDistance = 60;
+        let targetRotation = 0;
+        let currentRotation = 0;
+
+        async function init() {
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x030305, 0.005);
+            
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            mainGroup = new THREE.Group();
+            scene.add(mainGroup);
+
+            // 首次加载默认图像
+            await build3DModelFromImage(DEFAULT_IMAGE_URL);
+            createRings();
+            createBackgroundStars();
+
+            setupMediaPipe();
+            setupImageUpload();
+            
+            animate();
+        }
+
+        // --- 核心 3D 重建逻辑 ---
+        async function build3DModelFromImage(imageUrl) {
+            return new Promise((resolve) => {
+                const loader = new THREE.ImageLoader();
+                loader.setCrossOrigin('anonymous');
+                
+                loader.load(imageUrl, (image) => {
+                    // 清理旧的模型
+                    if (modelParticles) {
+                        mainGroup.remove(modelParticles);
+                        modelParticles.geometry.dispose();
+                        modelParticles.material.dispose();
+                    }
+
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                    
+                    // 根据原图宽高比动态计算采样网格大小
+                    const aspect = image.width / image.height;
+                    let imgW = 256;
+                    let imgH = 256;
+                    if (aspect > 1) {
+                        imgH = Math.floor(256 / aspect);
+                    } else {
+                        imgW = Math.floor(256 * aspect);
+                    }
+
+                    canvas.width = imgW;
+                    canvas.height = imgH;
+                    ctx.drawImage(image, 0, 0, imgW, imgH);
+                    const imgData = ctx.getImageData(0, 0, imgW, imgH).data;
+
+                    const positions = [];
+                    const colors = [];
+                    
+                    const scale = 0.15; // 缩放比例
+
+                    // 随机生成数万个粒子，基于图像亮度映射深度
+                    for (let i = 0; i < MODEL_PARTICLES; i++) {
+                        const x = Math.floor(Math.random() * imgW);
+                        const y = Math.floor(Math.random() * imgH);
+                        const pixelIdx = (y * imgW + x) * 4;
+
+                        const r = imgData[pixelIdx] / 255;
+                        const g = imgData[pixelIdx + 1] / 255;
+                        const b = imgData[pixelIdx + 2] / 255;
+                        const a = imgData[pixelIdx + 3] / 255;
+
+                        // 过滤掉纯白色或接近白色的背景像素 
+                        if (r > 0.9 && g > 0.9 && b > 0.9) continue;
+                        // 过滤透明像素
+                        if (a < 0.1) continue;
+
+                        // X, Y 坐标映射 (让中心点在 0,0)
+                        // 加入细微扰动(jitter)让模型更像粒子云而不是硬切片
+                        const px = (x - imgW / 2) * scale + (Math.random() - 0.5) * 0.15;
+                        const py = (imgH / 2 - y) * scale + (Math.random() - 0.5) * 0.15;
+
+                        // Z 坐标深度映射：根据亮度 (Luminance) 测算厚度
+                        const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+                        const depthThickness = 8; // 模型前后厚度
+                        // 越亮的地方越靠前，加上体积内随机分布
+                        const pz = (luminance * depthThickness) - (depthThickness / 2) + (Math.random() - 0.5) * 1.5;
+
+                        positions.push(px, py, pz);
+                        // 颜色提亮以配合发光混合模式
+                        colors.push(r * 1.5, g * 1.5, b * 1.5);
+                    }
+
+                    const geometry = new THREE.BufferGeometry();
+                    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+                    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+                    const material = new THREE.PointsMaterial({
+                        size: 0.12,
+                        vertexColors: true,
+                        transparent: true,
+                        opacity: 0.85,
+                        blending: THREE.AdditiveBlending,
+                        depthWrite: false
+                    });
+
+                    modelParticles = new THREE.Points(geometry, material);
+                    mainGroup.add(modelParticles);
+
+                    resolve();
+                });
+            });
+        }
+
+        // --- 用户交互与图片上传 ---
+        function setupImageUpload() {
+            const uploadInput = document.getElementById('imageUpload');
+            uploadInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = async (event) => {
+                        const imageUrl = event.target.result;
+                        const loaderEl = document.getElementById('loader');
+                        document.getElementById('loader-text').innerText = "正在构建 3D 全息模型...";
+                        loaderEl.style.display = 'block';
+                        
+                        // 重建模型
+                        await build3DModelFromImage(imageUrl);
+                        
+                        loaderEl.style.display = 'none';
+                    };
+                    reader.readAsDataURL(file);
+                }
+            });
+        }
+
+        function createRings() {
+            function createRingObj(innerR, outerR, count, colorHex) {
+                const geo = new THREE.BufferGeometry();
+                const pos = [];
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const r = innerR + Math.random() * (outerR - innerR);
+                    const x = Math.cos(angle) * r;
+                    const z = Math.sin(angle) * r;
+                    const y = (Math.random() - 0.5) * 1.5; // 环的厚度
+                    pos.push(x, y, z);
+                }
+                geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+                const mat = new THREE.PointsMaterial({
+                    size: 0.1,
+                    color: colorHex,
+                    transparent: true,
+                    opacity: 0.4,
+                    blending: THREE.AdditiveBlending
+                });
+                return new THREE.Points(geo, mat);
+            }
+
+            ring1 = createRingObj(22, 28, RING_PARTICLES, 0xffccaa);
+            ring2 = createRingObj(30, 36, RING_PARTICLES / 2, 0x88bbff); 
+            
+            ring1.rotation.x = Math.PI / 2.5;
+            ring2.rotation.x = -Math.PI / 3;
+
+            mainGroup.add(ring1);
+            mainGroup.add(ring2);
+        }
+
+        function createBackgroundStars() {
+            const geo = new THREE.BufferGeometry();
+            const pos = [];
+            for(let i=0; i<4000; i++) {
+                pos.push((Math.random()-0.5)*400, (Math.random()-0.5)*400, (Math.random()-0.5)*400);
+            }
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+            const mat = new THREE.PointsMaterial({ size: 0.2, color: 0x555566 });
+            scene.add(new THREE.Points(geo, mat));
+        }
+
+        // --- 手势识别逻辑 ---
+        function setupMediaPipe() {
+            videoElement = document.getElementById('webcam-video');
+            const gestureTypeEl = document.getElementById('gesture-type');
+            const zoomSpeedEl = document.getElementById('zoom-speed');
+            const rotationValEl = document.getElementById('rotation-val');
+
+            hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            hands.onResults((results) => {
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    const landmarks = results.multiHandLandmarks[0];
+                    const isFist = checkIsFist(landmarks);
+                    
+                    // 计算手掌旋转角度
+                    const angle = Math.atan2(landmarks[9].y - landmarks[0].y, landmarks[9].x - landmarks[0].x) + Math.PI / 2;
+                    targetRotation = angle;
+
+                    // 缩放控制
+                    if (isFist) {
+                        gestureTypeEl.innerText = "✊ 握拳 (远离中)";
+                        gestureTypeEl.style.color = "#ff4444";
+                        // 速度先慢后快（指数增长）
+                        currentDistance += Math.pow(currentDistance * 0.05, 1.5) * 0.1;
+                    } else {
+                        gestureTypeEl.innerText = "🖐️ 张开 (靠近中)";
+                        gestureTypeEl.style.color = "#44ff44";
+                        // 速度先快后慢（差值减速）
+                        const approachSpeed = (currentDistance - MIN_CAMERA_DIST) * 0.08;
+                        currentDistance -= approachSpeed;
+                    }
+
+                    currentDistance = Math.max(MIN_CAMERA_DIST, Math.min(MAX_CAMERA_DIST, currentDistance));
+                    
+                    zoomSpeedEl.innerText = currentDistance.toFixed(1) + " M";
+                    rotationValEl.innerText = Math.round(targetRotation * 180 / Math.PI) + "°";
+                } else {
+                    gestureTypeEl.innerText = "未检测到手部";
+                    gestureTypeEl.style.color = "#ffaa00";
+                }
+            });
+
+            const cameraPipe = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({ image: videoElement });
+                },
+                width: 640,
+                height: 480
+            });
+            cameraPipe.start();
+            document.getElementById('loader').style.display = 'none';
+        }
+
+        function checkIsFist(landmarks) {
+            const fingers = [8, 12, 16, 20];
+            let closedFingers = 0;
+            for (const f of fingers) {
+                if (landmarks[f].y > landmarks[f - 2].y) closedFingers++;
+            }
+            return closedFingers >= 3;
+        }
+
+        // --- 动画与渲染 ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 模型本身微弱的呼吸自转
+            if (mainGroup) {
+                mainGroup.rotation.y += 0.0005; 
+            }
+            if (ring1 && ring2) {
+                ring1.rotation.z += 0.002;
+                ring2.rotation.z -= 0.0015;
+            }
+
+            // 平滑插值相机角度
+            currentRotation += (targetRotation - currentRotation) * 0.1;
+            
+            // 计算相机位置，聚焦原点
+            camera.position.x = Math.sin(currentRotation) * currentDistance;
+            camera.position.z = Math.cos(currentRotation) * currentDistance;
+            camera.position.y = currentDistance * 0.1; // 稍微抬高一点视角
+            
+            camera.lookAt(0, 0, 0);
+
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        window.onload = init;
+    </script>
+</body>
+</html>
