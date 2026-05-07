@@ -101,12 +101,55 @@
             .portal-grid { gap: 20px; }
             .portal-card { width: 80%; padding: 30px; }
         }
+
+        /* 右下角二维码触发按钮 */
+        .qr-trigger {
+            position: absolute; bottom: 30px; right: 30px; z-index: 100;
+            background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255,255,255,0.2);
+            color: white; padding: 12px 20px; border-radius: 50px; cursor: pointer;
+            backdrop-filter: blur(10px); pointer-events: auto;
+            transition: all 0.3s; font-size: 14px; letter-spacing: 1px;
+        }
+        .qr-trigger:hover { background: rgba(255, 255, 255, 0.15); transform: scale(1.05); }
+
+        /* 二维码弹窗 */
+        #qr-modal {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(10px);
+            z-index: 1000; justify-content: center; align-items: center; flex-direction: column;
+        }
+        .qr-container {
+            background: white; padding: 25px; border-radius: 15px; box-shadow: 0 0 50px rgba(0,0,0,1);
+            margin-bottom: 20px;
+        }
+        .qr-close {
+            color: white; border: 1px solid white; background: transparent;
+            padding: 8px 25px; border-radius: 50px; cursor: pointer; transition: 0.3s;
+        }
+        .qr-close:hover { background: white; color: black; }
+
+        #site-loader {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #010103; z-index: 9999; display: flex;
+            justify-content: center; align-items: center; transition: opacity 1s;
+        }
+
     </style>
 </head>
 <body>
 
     <div class="scanline"></div>
     <div id="webgl-container"></div>
+
+    <!-- 二维码按钮 -->
+    <button class="qr-trigger" onclick="toggleQR()">📱 手机扫码访问</button>
+
+    <!-- 二维码弹窗 -->
+    <div id="qr-modal">
+        <div class="qr-container" id="qrcode"></div>
+        <p style="margin-bottom: 20px; letter-spacing: 2px; font-weight: 200;">扫描二维码 开启移动交互</p>
+        <button class="qr-close" onclick="toggleQR()">关闭</button>
+    </div>
 
     <div id="content-layer">
         <header class="header">
@@ -149,6 +192,25 @@
 
         const windowHalfX = window.innerWidth / 2;
         const windowHalfY = window.innerHeight / 2;
+        
+        window.toggleQR = function() {
+            const modal = document.getElementById('qr-modal');
+            const qrDiv = document.getElementById('qrcode');
+            
+            if (modal.style.display === 'flex') {
+                modal.style.display = 'none';
+            } else {
+                qrDiv.innerHTML = ""; // 清空旧的
+                new QRCode(qrDiv, {
+                    text: window.location.href, // 自动获取当前 HTTPS 网址
+                    width: 180,
+                    height: 180,
+                    colorDark : "#000000",
+                    colorLight : "#ffffff"
+                });
+                modal.style.display = 'flex';
+            }
+        };
 
         function init() {
             const container = document.getElementById('webgl-container');
